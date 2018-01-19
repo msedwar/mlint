@@ -1,0 +1,4 @@
+.*
+!/.gitignore
+cpplint.py
+.idea/*
