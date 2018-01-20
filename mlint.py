@@ -6197,13 +6197,13 @@ def ProcessFile(filename, vlevel, extra_check_functions=[]):
                 Error(filename, linenum, 'whitespace/newline', 1,
                       'Unexpected \\r (^M) found; better to use only \\n')
 
-    if not filename in _cpplint_state.file_error_count or \
-        _cpplint_state.file_error_count[filename] == 0:
-        print_success('%s clean!' % filename)
-    else:
-        print_info('%s has %s%d%s errors' %
-                   (filename, TEXT_RED + BOLD,
-                    _cpplint_state.file_error_count[filename], RESET))
+        if not filename in _cpplint_state.file_error_count or \
+            _cpplint_state.file_error_count[filename] == 0:
+            print_success('%s clean!' % filename)
+        else:
+            print_info('%s has %s%d%s errors' %
+                       (filename, TEXT_RED + BOLD,
+                        _cpplint_state.file_error_count[filename], RESET))
     _RestoreFilters()
 
 
