@@ -256,6 +256,9 @@ _ERROR_CATEGORIES = [
     'whitespace/semicolon',
     'whitespace/tab',
     'whitespace/todo',
+    'readability/single_if',
+    'readability/preincrement',
+    'readability/pointer_symbol_placement'
 ]
 
 # These error categories are no longer enforced by cpplint, but for backwards-
@@ -269,7 +272,12 @@ _LEGACY_ERROR_CATEGORIES = [
 # flag. By default all errors are on, so only add here categories that should be
 # off by default (i.e., categories that must be enabled by the --filter= flags).
 # All entries here should start with a '-' or '+', as in the --filter= flag.
-_DEFAULT_FILTERS = ['-build/include_alpha']
+_DEFAULT_FILTERS = [
+    '-legal/copyright',
+    '-runtime/references',
+    '-readability/casting',
+    '-runtime/explicit'
+]
 
 # The default list of categories suppressed for C (not C++) files.
 _DEFAULT_C_SUPPRESSED_CATEGORIES = [
@@ -543,7 +551,7 @@ _line_length = 80
 
 # The allowed extensions for file names
 # This is set by --extensions flag.
-_valid_extensions = set(['cc', 'h', 'cpp', 'cu', 'cuh'])
+_valid_extensions = set(['cc', 'h', 'cpp', 'cxx'])
 
 # Treat all headers starting with 'h' equally: .h, .hpp, .hxx etc.
 # This is set by --headers flag.
@@ -552,6 +560,48 @@ _hpp_headers = set(['h'])
 # {str, bool}: a map from error categories to booleans which indicate if the
 # category should be suppressed for every line.
 _global_error_suppressions = {}
+
+
+# ==============================================================================
+
+CSI = "\x1B["
+RESET = CSI + "0m"
+BOLD = CSI + "1m"
+
+TEXT_RED = CSI + "31m"
+TEXT_GREEN = CSI + "32m"
+TEXT_YELLOW = CSI + "33m"
+TEXT_BLUE = CSI + "34m"
+
+def _print(message, newline=True):
+    sys.stdout.write(message)
+    if newline:
+        sys.stdout.write("\n")
+
+
+def print_error(message, newline=True):
+    _print(TEXT_RED + BOLD + "> " + RESET
+        + TEXT_RED + message + RESET,
+        newline)
+
+
+def print_warning(message, newline=True):
+    _print(TEXT_YELLOW + BOLD + "> " + RESET
+        + TEXT_YELLOW + message + RESET,
+        newline)
+
+
+def print_info(message, newline=True):
+    _print(TEXT_BLUE + BOLD + "> " + RESET + message, newline)
+
+
+def print_success(message, newline=True):
+    _print(TEXT_GREEN + BOLD + "> " + RESET
+        + TEXT_GREEN + message + RESET,
+        newline)
+
+
+# ==============================================================================
 
 
 def ProcessHppHeadersOption(val):
@@ -853,6 +903,7 @@ class _CppLintState(object):
 
     def __init__(self):
         self.verbose_level = 1  # global setting.
+        self.file_error_count = {} # string to int dict storing file err counts
         self.error_count = 0  # global count of reported errors
         # filters to apply when emitting error messages
         self.filters = _DEFAULT_FILTERS[:]
@@ -864,7 +915,7 @@ class _CppLintState(object):
         # output format:
         # "emacs" - format that emacs can parse (default)
         # "vs7" - format that Microsoft Visual Studio 7 can parse
-        self.output_format = 'emacs'
+        self.output_format = 'mlint'
 
     def SetOutputFormat(self, output_format):
         """Sets the output format for errors."""
@@ -923,8 +974,12 @@ class _CppLintState(object):
         self.error_count = 0
         self.errors_by_category = {}
 
-    def IncrementErrorCount(self, category):
+    def IncrementErrorCount(self, filename, category):
         """Bumps the module's error statistic."""
+        if filename not in self.file_error_count:
+            self.file_error_count[filename] = 0
+        self.file_error_count[filename] += 1
+
         self.error_count += 1
         if self.counting in ('toplevel', 'detailed'):
             if self.counting != 'detailed':
@@ -936,9 +991,13 @@ class _CppLintState(object):
     def PrintErrorCounts(self):
         """Print a summary of errors by category, and the total."""
         for category, count in self.errors_by_category.iteritems():
-            sys.stderr.write('Category \'%s\' errors found: %d\n' %
-                             (category, count))
-        sys.stdout.write('Total errors found: %d\n' % self.error_count)
+            print_info('Category \'%s\' errors found: %s%d%s' %
+                       (category, TEXT_RED + BOLD, count, RESET))
+        if self.error_count > 0:
+            print_error('Total errors found: %s%d%s' %
+                       (BOLD, self.error_count, RESET))
+        else:
+            print_success('No errors')
 
 
 _cpplint_state = _CppLintState()
@@ -1217,15 +1276,19 @@ def Error(filename, linenum, category, confidence, message):
     message: The error message.
   """
     if _ShouldPrintError(category, confidence, linenum):
-        _cpplint_state.IncrementErrorCount(category)
+        _cpplint_state.IncrementErrorCount(filename, category)
         if _cpplint_state.output_format == 'vs7':
-            sys.stderr.write('%s(%s): error cpplint: [%s] %s [%d]\n' % (
+            print_error('%s(%s): error cpplint: [%s] %s [%d]' % (
                 filename, linenum, category, message, confidence))
         elif _cpplint_state.output_format == 'eclipse':
-            sys.stderr.write('%s:%s: warning: %s  [%s] [%d]\n' % (
+            print_error('%s:%s: warning: %s  [%s] [%d]' % (
                 filename, linenum, message, category, confidence))
+        elif _cpplint_state.output_format == 'mlint':
+            print_error('(%s:%s) [%s] %s' % (
+                filename, linenum, category, message
+            ))
         else:
-            sys.stderr.write('%s:%s:  %s  [%s] [%d]\n' % (
+            print_error('%s:%s:  %s  [%s] [%d]' % (
                 filename, linenum, message, category, confidence))
 
 
@@ -1790,16 +1853,19 @@ def GetHeaderGuardCPPVariable(filename):
     filename = filename.replace('C++', 'cpp').replace('c++', 'cpp')
 
     fileinfo = FileInfo(filename)
-    file_path_from_root = fileinfo.RepositoryName()
-    if _root:
-        suffix = os.sep
-        # On Windows using directory separator will leave us with
-        # "bogus escape error" unless we properly escape regex.
-        if suffix == '\\':
-            suffix += '\\'
-        file_path_from_root = re.sub('^' + _root + suffix, '',
-                                     file_path_from_root)
-    return re.sub(r'[^a-zA-Z0-9]', '_', file_path_from_root).upper() + '_'
+    guard_name = fileinfo.BaseName() + fileinfo.Extension()
+    # TODO Updated header guard style
+    # file_path_from_root = fileinfo.RepositoryName()
+    # if _root:
+    #     suffix = os.sep
+    #     # On Windows using directory separator will leave us with
+    #     # "bogus escape error" unless we properly escape regex.
+    #     if suffix == '\\':
+    #         suffix += '\\'
+    #     file_path_from_root = re.sub('^' + _root + suffix, '',
+    #                                  file_path_from_root)
+    # return re.sub(r'[^a-zA-Z0-9]', '_', file_path_from_root).upper() + '_'
+    return '_' + re.sub(r'[^a-zA-Z0-9]', '_', guard_name).upper() + '_'
 
 
 def CheckForHeaderGuard(filename, clean_lines, error):
@@ -2623,7 +2689,7 @@ class NestingState(object):
                 # Check that access keywords are indented +1 space.  Skip this
                 # check if the keywords are not preceded by whitespaces.
                 indent = access_match.group(1)
-                if (len(indent) != classinfo.class_indent + 1 and
+                if (len(indent) != classinfo.class_indent + 4 and
                         Match(r'^\s*$', indent)):
                     if classinfo.is_struct:
                         parent = 'struct ' + classinfo.name
@@ -2633,7 +2699,7 @@ class NestingState(object):
                     if access_match.group(3):
                         slots = access_match.group(3)
                     error(filename, linenum, 'whitespace/indent', 3,
-                          '%s%s: should be indented +1 space inside %s' % (
+                          '%s%s: should be indented +4 spaces inside %s' % (
                               access_match.group(2), slots, parent))
 
         # Consume braces or semicolons from what's left of the line
@@ -2944,8 +3010,9 @@ def CheckSpacingForFunctionCall(filename, clean_lines, linenum, error):
             # If the closing parenthesis is preceded by only whitespaces,
             # try to give a more descriptive error message.
             if Search(r'^\s+\)', fncall):
-                error(filename, linenum, 'whitespace/parens', 2,
-                      'Closing ) should be moved to the previous line')
+                if not Match(r'^\s+', clean_lines.elided[linenum - 1]):
+                    error(filename, linenum, 'whitespace/parens', 2,
+                        'Closing ) should be moved to the previous line')
             else:
                 error(filename, linenum, 'whitespace/parens', 2,
                       'Extra space before )')
@@ -3067,15 +3134,16 @@ def CheckComment(line, filename, linenum, next_line_start, error):
         # Check if the // may be in quotes.  If so, ignore it
         if re.sub(r'\\.', '', line[0:commentpos]).count('"') % 2 == 0:
             # Allow one space for new scopes, two spaces otherwise:
-            if (not (
-                Match(r'^.*{ *//', line) and next_line_start == commentpos) and
-                    ((commentpos >= 1 and
-                              line[commentpos - 1] not in string.whitespace) or
-                         (commentpos >= 2 and
-                                  line[
-                                          commentpos - 2] not in string.whitespace))):
-                error(filename, linenum, 'whitespace/comments', 2,
-                      'At least two spaces is best between code and comments')
+            # TODO Removed two space rule
+            # if (not (
+            #     Match(r'^.*{ *//', line) and next_line_start == commentpos) and
+            #         ((commentpos >= 1 and
+            #                   line[commentpos - 1] not in string.whitespace) or
+            #              (commentpos >= 2 and
+            #                       line[
+            #                               commentpos - 2] not in string.whitespace))):
+            #     error(filename, linenum, 'whitespace/comments', 2,
+            #           'At least two spaces is best between code and comments')
 
             # Checks for common mistakes in TODO comments.
             comment = line[commentpos:]
@@ -3691,52 +3759,66 @@ def CheckBraces(filename, clean_lines, linenum, error):
 
     line = clean_lines.elided[linenum]  # get rid of comments and strings
 
-    if Match(r'\s*{\s*$', line):
-        # We allow an open brace to start a line in the case where someone is using
-        # braces in a block to explicitly create a new scope, which is commonly used
-        # to control the lifetime of stack-allocated variables.  Braces are also
-        # used for brace initializers inside function calls.  We don't detect this
-        # perfectly: we just don't complain if the last non-whitespace character on
-        # the previous non-blank line is ',', ';', ':', '(', '{', or '}', or if the
-        # previous line starts a preprocessor block. We also allow a brace on the
-        # following line if it is part of an array initialization and would not fit
-        # within the 80 character limit of the preceding line.
-        prevline = GetPreviousNonBlankLine(clean_lines, linenum)[0]
-        if (not Search(r'[,;:}{(]\s*$', prevline) and
-                not Match(r'\s*#', prevline) and
-                not (GetLineWidth(
-                    prevline) > _line_length - 2 and '[]' in prevline)):
-            error(filename, linenum, 'whitespace/braces', 4,
-                  '{ should almost always be at the end of the previous line')
+    # TODO updated brace style
+    # if Match(r'\s*{\s*$', line):
+    #     # We allow an open brace to start a line in the case where someone is using
+    #     # braces in a block to explicitly create a new scope, which is commonly used
+    #     # to control the lifetime of stack-allocated variables.  Braces are also
+    #     # used for brace initializers inside function calls.  We don't detect this
+    #     # perfectly: we just don't complain if the last non-whitespace character on
+    #     # the previous non-blank line is ',', ';', ':', '(', '{', or '}', or if the
+    #     # previous line starts a preprocessor block. We also allow a brace on the
+    #     # following line if it is part of an array initialization and would not fit
+    #     # within the 80 character limit of the preceding line.
+    #     prevline = GetPreviousNonBlankLine(clean_lines, linenum)[0]
+    #     if (not Search(r'[,;:}{(]\s*$', prevline) and
+    #             not Match(r'\s*#', prevline) and
+    #             not (GetLineWidth(
+    #                 prevline) > _line_length - 2 and '[]' in prevline)):
+    #         error(filename, linenum, 'whitespace/braces', 4,
+    #               '{ should almost always be at the end of the previous line')
 
-    # An else clause should be on the same line as the preceding closing brace.
-    if Match(r'\s*else\b\s*(?:if\b|\{|$)', line):
-        prevline = GetPreviousNonBlankLine(clean_lines, linenum)[0]
-        if Match(r'\s*}\s*$', prevline):
-            error(filename, linenum, 'whitespace/newline', 4,
-                  'An else should appear on the same line as the preceding }')
+    # Match braces on same line as statement
+    if Match(r'.*[a-zA-Z0-9_)]\s*\{\s*$', line):
+        error(filename, linenum, 'whitespace/braces', 4,
+              'Braces opening new code blocks should always begin on a '
+              'new line'
+        )
 
-    # If braces come on one side of an else, they should be on both.
-    # However, we have to worry about "else if" that spans multiple lines!
-    if Search(r'else if\s*\(', line):  # could be multi-line if
-        brace_on_left = bool(Search(r'}\s*else if\s*\(', line))
-        # find the ( after the if
-        pos = line.find('else if')
-        pos = line.find('(', pos)
-        if pos > 0:
-            (endline, _, endpos) = CloseExpression(clean_lines, linenum, pos)
-            brace_on_right = endline[endpos:].find('{') != -1
-            if brace_on_left != brace_on_right:  # must be brace after if
-                error(filename, linenum, 'readability/braces', 5,
-                      'If an else has a brace on one side, it should have it on both')
-    elif Search(r'}\s*else[^{]*$', line) or Match(r'[^}]*else\s*{', line):
-        error(filename, linenum, 'readability/braces', 5,
-              'If an else has a brace on one side, it should have it on both')
+    # Match reserved words on same line as closing brace
+    if Match(r'.*\}\s*[a-zA-Z_]+', line):
+        error(filename, linenum, 'whitespace/braces', 4,
+            'Next control flow statement should begin on a new line'
+        )
 
-    # Likewise, an else should never have the else clause on the same line
-    if Search(r'\belse [^\s{]', line) and not Search(r'\belse if\b', line):
-        error(filename, linenum, 'whitespace/newline', 4,
-              'Else clause should never be on same line as else (use 2 lines)')
+    # # An else clause should be on the same line as the preceding closing brace.
+    # if Match(r'\s*else\b\s*(?:if\b|\{|$)', line):
+    #     prevline = GetPreviousNonBlankLine(clean_lines, linenum)[0]
+    #     if Match(r'\s*}\s*$', prevline):
+    #         error(filename, linenum, 'whitespace/newline', 4,
+    #               'An else should appear on the same line as the preceding }')
+    #
+    # # If braces come on one side of an else, they should be on both.
+    # # However, we have to worry about "else if" that spans multiple lines!
+    # if Search(r'else if\s*\(', line):  # could be multi-line if
+    #     brace_on_left = bool(Search(r'}\s*else if\s*\(', line))
+    #     # find the ( after the if
+    #     pos = line.find('else if')
+    #     pos = line.find('(', pos)
+    #     if pos > 0:
+    #         (endline, _, endpos) = CloseExpression(clean_lines, linenum, pos)
+    #         brace_on_right = endline[endpos:].find('{') != -1
+    #         if brace_on_left != brace_on_right:  # must be brace after if
+    #             error(filename, linenum, 'readability/braces', 5,
+    #                   'If an else has a brace on one side, it should have it on both')
+    # elif Search(r'}\s*else[^{]*$', line) or Match(r'[^}]*else\s*{', line):
+    #     error(filename, linenum, 'readability/braces', 5,
+    #           'If an else has a brace on one side, it should have it on both')
+    #
+    # # Likewise, an else should never have the else clause on the same line
+    # if Search(r'\belse [^\s{]', line) and not Search(r'\belse if\b', line):
+    #     error(filename, linenum, 'whitespace/newline', 4,
+    #           'Else clause should never be on same line as else (use 2 lines)')
 
     # In the same way, a do/while should never be on one line
     if Match(r'\s*do [^\s{]', line):
@@ -3766,6 +3848,9 @@ def CheckBraces(filename, clean_lines, linenum, error):
             and not (Match(r'\s*$', endline[endpos:])
                      and endlinenum < (len(clean_lines.elided) - 1)
                      and Match(r'\s*{', clean_lines.elided[endlinenum + 1]))):
+            error(filename, linenum, 'readability/single_if', 4,
+                  'If/Else If/Else statements should always have a block with '
+                  'braces and not be a single line implementation')
             while (endlinenum < len(clean_lines.elided)
                    and ';' not in clean_lines.elided[endlinenum][endpos:]):
                 endlinenum += 1
@@ -3984,6 +4069,9 @@ def CheckEmptyBlockBody(filename, clean_lines, linenum, error):
                 error(filename, end_linenum,
                       'whitespace/empty_conditional_body', 5,
                       'Empty conditional bodies should use {}')
+            elif matched.group(1) == 'while' and \
+                Match(r'\s*\}\s*$', clean_lines.elided[linenum - 1]):
+                pass # possible do-while loop
             else:
                 error(filename, end_linenum, 'whitespace/empty_loop_body', 5,
                       'Empty loop bodies should use {} or continue')
@@ -4233,6 +4321,34 @@ def CheckAltTokens(filename, clean_lines, linenum, error):
                   _ALT_TOKEN_REPLACEMENT[match.group(1)], match.group(1)))
 
 
+def CheckSemanticReadability(filename, clean_lines, linenum, error):
+    """Check semantic readability rules.
+
+      Args:
+        filename: The name of the current file.
+        clean_lines: A CleansedLines instance containing the file.
+        linenum: The number of the line to check.
+        error: The function to call with any errors found.
+    """
+    line = clean_lines.elided[linenum]
+    if Search(r'for.*;\s*[a-zA-Z0-9_]+\+\+\s*;', line) \
+            or Search(r'[a-zA-Z0-9_]+\+\+;', line):
+        error(filename, linenum, 'readability/preincrement', 4,
+              'Use pre-increment (\'++i\') when possible instead of post-'
+              'increment for semantic clarity'
+        )
+
+    if Search(r'[a-zA-Z_][a-zA-Z0-9_]+\*\s+[a-zA-Z_][a-zA-Z0-9_]+', line):
+        error(filename, linenum, 'readability/pointer_symbol_placement', 4,
+              'Pointers should be declared as (ptr_type *ptr_name)'
+        )
+
+    if Search(r'[a-zA-Z_][a-zA-Z0-9_]+\&\s+[a-zA-Z_][a-zA-Z0-9_]+', line):
+        error(filename, linenum, 'readability/pointer_symbol_placement', 4,
+              'References should be declared as (ref_type &ref_name)'
+        )
+
+
 def GetLineWidth(line):
     """Determines the width of the line in column positions.
 
@@ -4371,6 +4487,7 @@ def CheckStyle(filename, clean_lines, linenum, file_extension, nesting_state,
     CheckSpacingForFunctionCall(filename, clean_lines, linenum, error)
     CheckCheck(filename, clean_lines, linenum, error)
     CheckAltTokens(filename, clean_lines, linenum, error)
+    CheckSemanticReadability(filename, clean_lines, linenum, error)
     classinfo = nesting_state.InnermostClass()
     if classinfo:
         CheckSectionSpacing(filename, clean_lines, classinfo, linenum, error)
@@ -4495,10 +4612,11 @@ def CheckIncludeLine(filename, clean_lines, linenum, include_state, error):
     #
     # We also make an exception for Lua headers, which follow google
     # naming convention but not the include convention.
-    match = Match(r'#include\s*"([^/]+\.h)"', line)
-    if match and not _THIRD_PARTY_HEADERS_PATTERN.match(match.group(1)):
-        error(filename, linenum, 'build/include', 4,
-              'Include the directory when naming .h files')
+    # TODO removed directory requirement
+    # match = Match(r'#include\s*"([^/]+\.h)"', line)
+    # if match and not _THIRD_PARTY_HEADERS_PATTERN.match(match.group(1)):
+    #     error(filename, linenum, 'build/include', 4,
+    #           'Include the directory when naming .h files')
 
     # we shouldn't include a file more than once. actually, there are a
     # handful of instances where doing so is okay, but in general it's
@@ -5177,10 +5295,11 @@ def CheckCasts(filename, clean_lines, linenum, error):
     if CheckCStyleCast(filename, clean_lines, linenum, 'const_cast',
                        r'\((char\s?\*+\s?)\)\s*"', error):
         pass
-    else:
-        # Check pointer casts for other than string constants
-        CheckCStyleCast(filename, clean_lines, linenum, 'reinterpret_cast',
-                        r'\((\w+\s?\*+\s?)\)', error)
+    # TODO Muting Reinterpret casts
+    # else:
+    #     # Check pointer casts for other than string constants
+    #     CheckCStyleCast(filename, clean_lines, linenum, 'reinterpret_cast',
+    #                     r'\((\w+\s?\*+\s?)\)', error)
 
     # In addition, we look for people taking the address of a cast.  This
     # is dangerous -- casts can assign to temporaries, so the pointer doesn't
@@ -5954,10 +6073,10 @@ def ProcessConfigOverrides(filename):
                         if base_name:
                             pattern = re.compile(val)
                             if pattern.match(base_name):
-                                sys.stderr.write(
+                                print_warning(
                                     'Ignoring "%s": file excluded by "%s". '
                                     'File path component "%s" matches '
-                                    'pattern "%s"\n' %
+                                    'pattern "%s"' %
                                     (filename, cfg_file, base_name, val))
                                 return False
                     elif name == 'linelength':
@@ -5965,20 +6084,20 @@ def ProcessConfigOverrides(filename):
                         try:
                             _line_length = int(val)
                         except ValueError:
-                            sys.stderr.write('Line length must be numeric.')
+                            print_warning('Line length must be numeric.')
                     elif name == 'root':
                         global _root
                         _root = val
                     elif name == 'headers':
                         ProcessHppHeadersOption(val)
                     else:
-                        sys.stderr.write(
-                            'Invalid configuration option (%s) in file %s\n' %
+                        print_warning(
+                            'Invalid configuration option (%s) in file %s' %
                             (name, cfg_file))
 
         except IOError:
-            sys.stderr.write(
-                "Skipping config file '%s': Can't open for reading\n" % cfg_file)
+            print_warning(
+                "Skipping config file '%s': Can't open for reading" % cfg_file)
             keep_looking = False
 
     # Apply all the accumulated filters in reverse order (top-level directory
@@ -6039,8 +6158,8 @@ def ProcessFile(filename, vlevel, extra_check_functions=[]):
                 lf_lines.append(linenum + 1)
 
     except IOError:
-        sys.stderr.write(
-            "Skipping input '%s': Can't open for reading\n" % filename)
+        print_warning(
+            "Skipping input '%s': Can't open for reading" % filename)
         _RestoreFilters()
         return
 
@@ -6050,7 +6169,7 @@ def ProcessFile(filename, vlevel, extra_check_functions=[]):
     # When reading from stdin, the extension is unknown, so no cpplint tests
     # should rely on the extension.
     if filename != '-' and file_extension not in _valid_extensions:
-        sys.stderr.write('Ignoring %s; not a valid file name '
+        print_warning('Ignoring %s; not a valid file name '
                          '(%s)\n' % (filename, ', '.join(_valid_extensions)))
     else:
         ProcessFileData(filename, file_extension, lines, Error,
@@ -6074,7 +6193,13 @@ def ProcessFile(filename, vlevel, extra_check_functions=[]):
                 Error(filename, linenum, 'whitespace/newline', 1,
                       'Unexpected \\r (^M) found; better to use only \\n')
 
-    sys.stdout.write('Done processing %s\n' % filename)
+    if not filename in _cpplint_state.file_error_count or \
+        _cpplint_state.file_error_count[filename] == 0:
+        print_success('%s clean!' % filename)
+    else:
+        print_info('%s has %s%d%s errors' %
+                   (filename, TEXT_RED + BOLD,
+                    _cpplint_state.file_error_count[filename], RESET))
     _RestoreFilters()
 
 
@@ -6132,9 +6257,9 @@ def ParseArguments(args):
         if opt == '--help':
             PrintUsage(None)
         elif opt == '--output':
-            if val not in ('emacs', 'vs7', 'eclipse'):
+            if val not in ('mlint', 'emacs', 'vs7', 'eclipse'):
                 PrintUsage(
-                    'The only allowed output formats are emacs, vs7 and eclipse.')
+                    'The only allowed output formats are mlint, emacs, vs7 and eclipse.')
             output_format = val
         elif opt == '--verbose':
             verbosity = int(val)
