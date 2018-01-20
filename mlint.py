@@ -1855,7 +1855,7 @@ def GetHeaderGuardCPPVariable(filename, ifndef):
     fileinfo = FileInfo(filename)
     guard_name = fileinfo.BaseName() + fileinfo.Extension()
 
-    if len(ifndef) > 8:
+    if len(ifndef) > 8 + len(guard_name):
         project_name = ifndef.strip()[:-len(guard_name)]
         guard_name = project_name + guard_name
     # TODO Updated header guard style
