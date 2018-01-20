@@ -52,10 +52,13 @@ import string
 import sys
 import unicodedata
 
+_VERSION = "MLint v1.0.0"
+
 _USAGE = """
-Syntax: cpplint.py [--verbose=#] [--output=vs7] [--filter=-x,+y,...]
+Syntax: mlint.py [--verbose=#] [-o,--output=vs7] [-f,--filter=-x,+y,...]
                    [--counting=total|toplevel|detailed] [--root=subdir]
                    [--linelength=digits] [--headers=x,y,...]
+                   [-v,--version] [-h,--help]
         <file> [file] ...
 
   The style guidelines this tries to follow are those in
@@ -75,9 +78,14 @@ Syntax: cpplint.py [--verbose=#] [--output=vs7] [--filter=-x,+y,...]
 
   Flags:
 
-    output=vs7
-      By default, the output is formatted to ease emacs parsing.  Visual Studio
-      compatible output (vs7) may also be used.  Other formats are unsupported.
+    help
+      Displays this usage message
+
+    version
+      Displays version string
+
+    output=mlint|emacs|vs7|eclipse
+      Specify the output format. Default is "mlint"
 
     verbose=#
       Specify a number 0-5 to restrict errors to certain verbosity levels.
@@ -6213,11 +6221,18 @@ def PrintUsage(message):
   Args:
     message: The optional error message.
   """
-    sys.stderr.write(_USAGE)
+    sys.stderr.write(_USAGE + '\n')
     if message:
-        sys.exit('\nFATAL ERROR: ' + message)
+        print_error('FATAL ERROR: ' + message)
+        sys.exit(1)
     else:
         sys.exit(1)
+
+
+def PrintVersion():
+    """Prints the version information"""
+    sys.stdout.write(_VERSION + '\n')
+    sys.exit(0)
 
 
 def PrintCategories():
@@ -6241,8 +6256,11 @@ def ParseArguments(args):
     The list of filenames to lint.
   """
     try:
-        (opts, filenames) = getopt.getopt(args, '',
-                                          ['help', 'output=', 'verbose=',
+        (opts, filenames) = getopt.getopt(args, 'hvo:f:e:',
+                                          ['help',
+                                           'version',
+                                           'output=',
+                                           'verbose=',
                                            'counting=',
                                            'filter=',
                                            'root=',
@@ -6258,16 +6276,18 @@ def ParseArguments(args):
     counting_style = ''
 
     for (opt, val) in opts:
-        if opt == '--help':
+        if opt == '--help' or opt == '-h':
             PrintUsage(None)
-        elif opt == '--output':
+        elif opt == '--version' or opt == '-v':
+            PrintVersion()
+        elif opt == '--output' or opt == '-o':
             if val not in ('mlint', 'emacs', 'vs7', 'eclipse'):
                 PrintUsage(
                     'The only allowed output formats are mlint, emacs, vs7 and eclipse.')
             output_format = val
         elif opt == '--verbose':
             verbosity = int(val)
-        elif opt == '--filter':
+        elif opt == '--filter' or opt == '-f':
             filters = val
             if not filters:
                 PrintCategories()
@@ -6285,7 +6305,7 @@ def ParseArguments(args):
                 _line_length = int(val)
             except ValueError:
                 PrintUsage('Line length must be digits.')
-        elif opt == '--extensions':
+        elif opt == '--extensions' or opt == '-e':
             global _valid_extensions
             try:
                 _valid_extensions = set(val.split(','))
