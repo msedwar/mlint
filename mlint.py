@@ -1833,7 +1833,7 @@ def GetIndentLevel(line):
         return 0
 
 
-def GetHeaderGuardCPPVariable(filename):
+def GetHeaderGuardCPPVariable(filename, ifndef):
     """Returns the CPP variable that should be used as a header guard.
 
   Args:
@@ -1854,6 +1854,10 @@ def GetHeaderGuardCPPVariable(filename):
 
     fileinfo = FileInfo(filename)
     guard_name = fileinfo.BaseName() + fileinfo.Extension()
+
+    if len(ifndef) > 8:
+        project_name = ifndef.strip()[:-len(guard_name)]
+        guard_name = project_name + guard_name
     # TODO Updated header guard style
     # file_path_from_root = fileinfo.RepositoryName()
     # if _root:
@@ -1865,7 +1869,7 @@ def GetHeaderGuardCPPVariable(filename):
     #     file_path_from_root = re.sub('^' + _root + suffix, '',
     #                                  file_path_from_root)
     # return re.sub(r'[^a-zA-Z0-9]', '_', file_path_from_root).upper() + '_'
-    return '_' + re.sub(r'[^a-zA-Z0-9]', '_', guard_name).upper() + '_'
+    return re.sub(r'[^a-zA-Z0-9]', '_', guard_name).upper()
 
 
 def CheckForHeaderGuard(filename, clean_lines, error):
@@ -1891,8 +1895,6 @@ def CheckForHeaderGuard(filename, clean_lines, error):
         if Search(r'//\s*NOLINT\(build/header_guard\)', i):
             return
 
-    cppvar = GetHeaderGuardCPPVariable(filename)
-
     ifndef = ''
     ifndef_linenum = 0
     define = ''
@@ -1912,6 +1914,8 @@ def CheckForHeaderGuard(filename, clean_lines, error):
         if line.startswith('#endif'):
             endif = line
             endif_linenum = linenum
+
+    cppvar = GetHeaderGuardCPPVariable(filename, ifndef)
 
     if not ifndef or not define or ifndef != define:
         error(filename, 0, 'build/header_guard', 5,
@@ -4439,7 +4443,7 @@ def CheckStyle(filename, clean_lines, linenum, file_extension, nesting_state,
     # Check if the line is a header guard.
     is_header_guard = False
     if IsHeaderExtension(file_extension):
-        cppvar = GetHeaderGuardCPPVariable(filename)
+        cppvar = GetHeaderGuardCPPVariable(filename, '')
         if (line.startswith('#ifndef %s' % cppvar) or
                 line.startswith('#define %s' % cppvar) or
                 line.startswith('#endif  // %s' % cppvar)):
@@ -6170,7 +6174,7 @@ def ProcessFile(filename, vlevel, extra_check_functions=[]):
     # should rely on the extension.
     if filename != '-' and file_extension not in _valid_extensions:
         print_warning('Ignoring %s; not a valid file name '
-                         '(%s)\n' % (filename, ', '.join(_valid_extensions)))
+                         '(%s)' % (filename, ', '.join(_valid_extensions)))
     else:
         ProcessFileData(filename, file_extension, lines, Error,
                         extra_check_functions)
