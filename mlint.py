@@ -5934,11 +5934,11 @@ def FlagCxx11Features(filename, clean_lines, linenum, error):
 
     # Flag unapproved C++11 headers.
     if include and include.group(1) in ('cfenv',
-                                        'condition_variable',
+                                        #'condition_variable',
                                         'fenv.h',
                                         'future',
-                                        'mutex',
-                                        'thread',
+                                        #'mutex',
+                                        #'thread',
                                         'chrono',
                                         'ratio',
                                         'regex',
